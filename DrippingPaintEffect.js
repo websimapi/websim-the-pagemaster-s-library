@@ -31,8 +31,8 @@ export class DrippingPaintEffect {
         this.ceilingMaterial = ceilingMaterial;
         this.isActive = false;
 
-        this.dripCount = 150;
-        this.particlesPerDrip = 5; // 1 head + 4 tail segments
+        this.dripCount = 100; // Reduced count for better performance with more particles
+        this.particlesPerDrip = 15; // Increased for a smoother, stringier look
         this.particleCount = this.dripCount * this.particlesPerDrip;
         this.particles = null;
 
@@ -96,18 +96,18 @@ export class DrippingPaintEffect {
         const alphas = [];
         this.particleData = [];
 
-        const numClusters = 10;
+        const numClusters = 8; // Fewer, more defined drip areas
         const clusterCenters = [];
         for (let i = 0; i < numClusters; i++) {
             const angle = Math.random() * Math.PI * 2;
-            const radius = Math.random() * 25.0; 
+            const radius = Math.random() * 20.0; 
             clusterCenters.push({ x: Math.cos(angle) * radius, z: Math.sin(angle) * radius });
         }
 
         for (let i = 0; i < this.dripCount; i++) {
             // Pick a cluster and generate a point within it
             const cluster = clusterCenters[i % numClusters];
-            const clusterRadius = 5.0;
+            const clusterRadius = 4.0; // Tighter clusters
             const angle = Math.random() * Math.PI * 2;
             const radius = Math.random() * clusterRadius;
             
@@ -129,14 +129,14 @@ export class DrippingPaintEffect {
             const v = 0.5 + Math.asin(spherePoint.y) / Math.PI;
 
             const color = new THREE.Color(0xffffff); // Placeholder, will get color later
-            const initialSize = Math.random() * 2.0 + 1.5;
+            const initialSize = Math.random() * 2.5 + 2.0; // Slightly larger drips
 
             for (let j = 0; j < this.particlesPerDrip; j++) {
                 const isHead = j === 0;
                 positions.push(x, y, z);
                 colors.push(color.r, color.g, color.b);
-                sizes.push(isHead ? initialSize : initialSize * Math.pow(1 - j / this.particlesPerDrip, 2) * 0.6);
-                alphas.push(isHead ? 1.0 : 0.8 * (1 - j / this.particlesPerDrip));
+                sizes.push(isHead ? initialSize : initialSize * Math.pow(1 - j / this.particlesPerDrip, 2) * 0.5); // Thinner tail
+                alphas.push(isHead ? 1.0 : 0.9 * (1 - j / this.particlesPerDrip));
 
                 this.particleData.push({
                     isHead: isHead,
@@ -146,7 +146,7 @@ export class DrippingPaintEffect {
                     uv: new THREE.Vector2(u,v),
                     color: color, // Will be replaced
                     velocity: new THREE.Vector3(0, 0, 0),
-                    delay: Math.random() * 20.0 + 8.0, 
+                    delay: Math.random() * 25.0 + 10.0, // Longer, more varied delay
                     life: 0,
                     state: 'gathering', // gathering, stretching, falling, splatted
                     initialSize: initialSize,
@@ -182,8 +182,8 @@ export class DrippingPaintEffect {
         const alphas = this.particles.geometry.attributes.alpha.array;
         const sizes = this.particles.geometry.attributes.size.array;
         const customColors = this.particles.geometry.attributes.customColor.array;
-        const gravity = 3.5;
-        const drag = 0.98;
+        const gravity = 2.8; // Reduced gravity for a slower, heavier feel
+        const drag = 0.97; // Increased drag for more viscosity
         const baseIndex = i => i * this.particlesPerDrip;
 
         for (let i = 0; i < this.dripCount; i++) {
@@ -205,18 +205,22 @@ export class DrippingPaintEffect {
                     pHead.life = 0;
                 }
             } else if (pHead.state === 'stretching') {
-                const stretchDuration = 1.5;
+                const stretchDuration = 3.0; // Longer stretch phase
                 if (pHead.life < stretchDuration) {
                     const stretchProgress = pHead.life / stretchDuration;
-                    // Slowly move down
-                    positions[head_i3 + 1] = pHead.initialPos.y - stretchProgress * 0.5;
-                    // Stretch tail
+                    const easeOutQuad = t => t * (2 - t);
+                    const easedProgress = easeOutQuad(stretchProgress);
+
+                    // Head swells and slowly moves down
+                    sizes[headIndex] = pHead.initialSize * (1 + easedProgress * 0.3);
+                    positions[head_i3 + 1] = pHead.initialPos.y - easedProgress * 1.5; // Stretch further
+                    
+                    // Tail stretches out like sticky cheese
                      for (let j = 1; j < this.particlesPerDrip; j++) {
                         const particleIndex = headIndex + j;
-                        const p = this.particleData[particleIndex];
                         const leaderPos = new THREE.Vector3(positions[(particleIndex-1)*3], positions[(particleIndex-1)*3+1], positions[(particleIndex-1)*3+2]);
                         const currentPos = new THREE.Vector3(positions[particleIndex*3], positions[particleIndex*3+1], positions[particleIndex*3+2]);
-                        currentPos.lerp(leaderPos, 0.2);
+                        currentPos.lerp(leaderPos, 0.15); // Slower follow for more stretch
                         positions[particleIndex*3] = currentPos.x;
                         positions[particleIndex*3+1] = currentPos.y;
                         positions[particleIndex*3+2] = currentPos.z;
@@ -262,13 +266,15 @@ export class DrippingPaintEffect {
                     const currentPos = new THREE.Vector3(positions[particleIndex*3], positions[particleIndex*3+1], positions[particleIndex*3+2]);
                     
                     // Lerp to follow, creates a stretchy tail effect
-                    currentPos.lerp(leaderPos, 0.3); 
+                    currentPos.lerp(leaderPos, 0.45); // Tighter follow to look like a connected string
                     positions[particleIndex*3] = currentPos.x;
                     positions[particleIndex*3+1] = currentPos.y;
                     positions[particleIndex*3+2] = currentPos.z;
 
-                    // Fade tail over time
-                    alphas[particleIndex] = Math.max(0, 0.8 * (1 - j / this.particlesPerDrip) - pHead.life * 0.2);
+                    // Fade and thin tail over time/stretch
+                    const stretchFactor = pHead.initialPos.distanceTo(currentPos) / 10;
+                    alphas[particleIndex] = Math.max(0, 0.9 * (1 - j / this.particlesPerDrip) - stretchFactor);
+                    sizes[particleIndex] = pHead.initialSize * Math.pow(1 - j / this.particlesPerDrip, 2) * Math.max(0.1, 0.5 - stretchFactor * 0.5);
                 }
 
                 // Check for splat
@@ -293,8 +299,8 @@ export class DrippingPaintEffect {
                 
                 if (pHead.life < spreadDuration) {
                     const spreadProgress = pHead.life / spreadDuration;
-                    sizes[headIndex] += Math.sin(spreadProgress * Math.PI) * 1.5 * delta;
-                    alphas[headIndex] = 1.0 - Math.pow(spreadProgress, 4);
+                    sizes[headIndex] += Math.sin(spreadProgress * Math.PI) * 1.8 * delta; // Increased spread
+                    alphas[headIndex] = 1.0 - Math.pow(spreadProgress, 3);
                 } else {
                      alphas[headIndex] = Math.max(0, alphas[headIndex] - (delta / fadeDuration));
                 }
@@ -311,7 +317,7 @@ export class DrippingPaintEffect {
                         positions[i3 + 2] = p.initialPos.z;
 
                         p.velocity.set(0, 0, 0);
-                        p.delay = Math.random() * 20.0 + 15.0; // Longer respawn
+                        p.delay = Math.random() * 25.0 + 20.0; // Longer respawn
                         p.life = 0;
                         p.state = 'gathering';
 
@@ -319,8 +325,8 @@ export class DrippingPaintEffect {
                             alphas[particleIndex] = 1.0;
                             sizes[particleIndex] = p.initialSize * 0.5;
                         } else {
-                            sizes[particleIndex] = p.initialSize * Math.pow(1 - j / this.particlesPerDrip, 2) * 0.6;
-                            alphas[particleIndex] = 0.8 * (1 - j / this.particlesPerDrip);
+                            sizes[particleIndex] = p.initialSize * Math.pow(1 - j / this.particlesPerDrip, 2) * 0.5;
+                            alphas[particleIndex] = 0.9 * (1 - j / this.particlesPerDrip);
                         }
                     }
                 }

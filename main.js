@@ -67,7 +67,13 @@ async function init() {
 
     const ceilingTexture = loader.load('ceiling_fresco.png', (texture) => {
         // Dripping Paint Effect is created here, after the texture has loaded.
-        drippingEffect = new DrippingPaintEffect(scene, texture);
+        if (texture.image) {
+            drippingEffect = new DrippingPaintEffect(scene, texture);
+        } else {
+            texture.image.onload = () => {
+                 drippingEffect = new DrippingPaintEffect(scene, texture);
+            }
+        }
     });
 
     // Library Geometry

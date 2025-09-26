@@ -101,6 +101,7 @@ async function init() {
         side: THREE.BackSide,
         emissive: 0x111111,
         emissiveMap: ceilingTexture,
+        transparent: true // Enable transparency to see erased pixels
     });
     const ceiling = new THREE.Mesh(ceilingGeometry, ceilingMaterial);
     ceiling.name = 'ceiling'; // Name it so we can find it

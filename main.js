@@ -65,7 +65,10 @@ async function init() {
     floorTexture.wrapS = floorTexture.wrapT = THREE.RepeatWrapping;
     floorTexture.repeat.set(8, 8);
 
-    const ceilingTexture = loader.load('ceiling_fresco.png');
+    const ceilingTexture = loader.load('ceiling_fresco.png', (texture) => {
+        // Dripping Paint Effect is created here, after the texture has loaded.
+        drippingEffect = new DrippingPaintEffect(scene, texture);
+    });
 
     // Library Geometry
     // Floor
@@ -93,9 +96,6 @@ async function init() {
     const ceiling = new THREE.Mesh(ceilingGeometry, ceilingMaterial);
     ceiling.position.y = 25;
     scene.add(ceiling);
-
-    // Dripping Paint Effect
-    drippingEffect = new DrippingPaintEffect(scene, ceilingTexture);
 
     // Event Listeners
     document.addEventListener('keydown', onKeyDown);
@@ -154,7 +154,7 @@ function onKeyUp(event) {
 }
 
 function checkTrigger() {
-    if (effectTriggered) return;
+    if (effectTriggered || !drippingEffect) return;
 
     const playerPosition = controls.getObject().position;
     const distanceToCenter = playerPosition.distanceTo(new THREE.Vector3(0, playerPosition.y, 0));
@@ -196,10 +196,11 @@ function animate() {
         checkTrigger();
     }
     
-    drippingEffect.update(delta);
+    if (drippingEffect) {
+        drippingEffect.update(delta);
+    }
 
     renderer.render(scene, camera);
 }
 
 init();
-

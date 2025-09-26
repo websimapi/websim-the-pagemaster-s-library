@@ -151,4 +151,3 @@ export class DrippingPaintEffect {
         this.particles.geometry.attributes.position.needsUpdate = true;
     }
 }
-

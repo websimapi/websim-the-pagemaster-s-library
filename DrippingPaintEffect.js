@@ -75,15 +75,32 @@ export class DrippingPaintEffect {
         const alphas = [];
         this.particleData = [];
 
-        for (let i = 0; i < this.particleCount; i++) {
-            // Random point on a circle (for the rotunda ceiling base)
+        const numClusters = 7;
+        const clusterCenters = [];
+        for (let i = 0; i < numClusters; i++) {
             const angle = Math.random() * Math.PI * 2;
-            const radius = Math.random() * 29.5;
-            const x = Math.cos(angle) * radius;
-            const z = Math.sin(angle) * radius;
+            const radius = Math.random() * 25.0; // Clusters not at the very edge
+            clusterCenters.push({ x: Math.cos(angle) * radius, z: Math.sin(angle) * radius });
+        }
+
+        for (let i = 0; i < this.particleCount; i++) {
+            // Pick a cluster and generate a point within it
+            const cluster = clusterCenters[i % numClusters];
+            const clusterRadius = 6.0;
+            const angle = Math.random() * Math.PI * 2;
+            const radius = Math.random() * clusterRadius;
+            
+            let x = cluster.x + Math.cos(angle) * radius;
+            let z = cluster.z + Math.sin(angle) * radius;
+            
+            // Ensure particles are within the ceiling bounds
+            if (Math.sqrt(x*x + z*z) > 29.5) {
+                x *= 0.9;
+                z *= 0.9;
+            }
 
             // Project onto the sphere (ceiling)
-            const y = 25 + Math.sqrt(Math.max(0, 30*30 - x*x - z*z));
+            const y = 25 + Math.sqrt(Math.max(0, 30 * 30 - x * x - z * z));
 
             positions.push(x, y, z);
 
@@ -92,18 +109,18 @@ export class DrippingPaintEffect {
             const color = this._getColorFromUV(u, v);
             colors.push(color.r, color.g, color.b);
 
-            sizes.push(Math.random() * 2.0 + 1.0);
+            const initialSize = Math.random() * 1.5 + 0.5;
+            sizes.push(initialSize * 0.5); // Start smaller before swelling
             alphas.push(1.0);
             
             this.particleData.push({
-                velocity: new THREE.Vector3(
-                    (Math.random() - 0.5) * 0.01,
-                    0, // Start with no velocity
-                    (Math.random() - 0.5) * 0.01
-                ),
-                delay: Math.random() * 10.0, // Delay before starting to drip
+                initialPos: new THREE.Vector3(x, y, z),
+                velocity: new THREE.Vector3(0, 0, 0),
+                delay: Math.random() * 15.0 + 5.0, // Increased delay for slower start
                 life: 0,
-                state: 'gathering' // gathering, falling, splatted
+                state: 'gathering', // gathering, falling, splatted
+                initialSize: initialSize,
+                wobbleFactor: Math.random() * Math.PI * 2, // For unique shimmer
             });
         }
 
@@ -133,7 +150,7 @@ export class DrippingPaintEffect {
         const positions = this.particles.geometry.attributes.position.array;
         const alphas = this.particles.geometry.attributes.alpha.array;
         const sizes = this.particles.geometry.attributes.size.array;
-        const gravity = 1.5;
+        const gravity = 2.5; // Slightly increased gravity for a heavier feel
 
         for (let i = 0; i < this.particleCount; i++) {
             const p = this.particleData[i];
@@ -141,13 +158,23 @@ export class DrippingPaintEffect {
             const i3 = i * 3;
 
             if (p.state === 'gathering') {
-                if (p.life >= p.delay) {
+                if (p.life < p.delay) {
+                    // Swell up before falling
+                    sizes[i] = p.initialSize * 0.5 + (p.life / p.delay) * p.initialSize;
+                    // Shimmer effect
+                    const shimmer = Math.sin(p.life * 2 + p.wobbleFactor) * 0.05;
+                    positions[i3] = p.initialPos.x + shimmer;
+                    positions[i3 + 2] = p.initialPos.z - shimmer;
+                } else {
                     p.state = 'falling';
                     p.life = 0;
+                    // Start with a very small downward velocity
+                    p.velocity.set((Math.random() - 0.5) * 0.1, -0.01, (Math.random() - 0.5) * 0.1);
                 }
             } else if (p.state === 'falling') {
-                // Apply gravity
-                p.velocity.y -= gravity * delta;
+                // Apply accelerating gravity for a "heavy" tear-drop feel
+                const fallAcceleration = gravity * Math.min(1.0, p.life * 1.2);
+                p.velocity.y -= fallAcceleration * delta;
 
                 positions[i3] += p.velocity.x * delta;
                 positions[i3 + 1] += p.velocity.y * delta;
@@ -158,30 +185,36 @@ export class DrippingPaintEffect {
                     positions[i3 + 1] = 0.1;
                     p.state = 'splatted';
                     p.life = 0;
-                    sizes[i] *= 1.5 + Math.random(); // splash bigger
+                    // Splash bigger based on final velocity
+                    const speed = p.velocity.length();
+                    sizes[i] *= 1.2 + Math.min(3, speed * 0.2); 
                 }
             } else if (p.state === 'splatted') {
-                 // Fade out on the floor
-                alphas[i] = Math.max(0, 1.0 - p.life / 2.0);
+                 // Puddle spreads out then fades
+                const spreadDuration = 0.7;
+                const fadeDuration = 3.0;
+                
+                if (p.life < spreadDuration) {
+                    // Spread out
+                    sizes[i] += (2.0 - (p.life / spreadDuration)) * delta;
+                } else {
+                    // Fade out
+                    alphas[i] = Math.max(0, 1.0 - (p.life - spreadDuration) / fadeDuration);
+                }
+
 
                 if (alphas[i] <= 0) {
                     // Reset particle to ceiling
-                    const angle = Math.random() * Math.PI * 2;
-                    const radius = Math.random() * 29.5;
-                    const x = Math.cos(angle) * radius;
-                    const z = Math.sin(angle) * radius;
-                    const y = 25 + Math.sqrt(Math.max(0, 30*30 - x*x - z*z));
+                    positions[i3] = p.initialPos.x;
+                    positions[i3 + 1] = p.initialPos.y;
+                    positions[i3 + 2] = p.initialPos.z;
                     
-                    positions[i3] = x;
-                    positions[i3 + 1] = y;
-                    positions[i3 + 2] = z;
-                    
-                    p.velocity.set((Math.random() - 0.5) * 0.01, 0, (Math.random() - 0.5) * 0.01);
-                    p.delay = Math.random() * 10.0;
+                    p.velocity.set(0, 0, 0);
+                    p.delay = Math.random() * 15.0 + 8.0; // Give it a long delay before respawning
                     p.life = 0;
                     p.state = 'gathering';
                     alphas[i] = 1.0;
-                    sizes[i] = Math.random() * 2.0 + 1.0;
+                    sizes[i] = p.initialSize * 0.5; // Reset to small size
                 }
             }
         }

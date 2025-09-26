@@ -25,36 +25,48 @@ const fragmentShader = `
 `;
 
 export class DrippingPaintEffect {
-    constructor(scene, texture) {
+    constructor(scene, texture, ceilingMaterial) {
         this.scene = scene;
-        this.texture = texture;
+        this.originalTexture = texture;
+        this.ceilingMaterial = ceilingMaterial;
         this.isActive = false;
-        this.particleCount = 5000;
+        
+        // Reduced particle count for more isolated drips
+        // Each "drip" is now composed of a head and a tail, so total particles = particleCount * 2
+        this.dripCount = 350; 
+        this.particleCount = this.dripCount * 2;
         this.particles = null;
 
         // Get image data from texture to sample colors
-        const image = this.texture.image;
+        const image = this.originalTexture.image;
         if (!image) {
             console.error("DrippingPaintEffect: Texture image is not available.");
             return;
         }
-        const canvas = document.createElement('canvas');
-        canvas.width = image.width;
-        canvas.height = image.height;
-        this.ctx = canvas.getContext('2d', { willReadFrequently: true });
-        this.ctx.drawImage(image, 0, 0);
+
+        // Create a new canvas for modifying the texture
+        this.textureCanvas = document.createElement('canvas');
+        this.textureCanvas.width = image.width;
+        this.textureCanvas.height = image.height;
+        this.textureCtx = this.textureCanvas.getContext('2d', { willReadFrequently: true });
+        this.textureCtx.drawImage(image, 0, 0);
+
+        // Create a new texture from this canvas that we can update
+        this.dynamicTexture = new THREE.CanvasTexture(this.textureCanvas);
+        this.ceilingMaterial.map = this.dynamicTexture;
+        this.ceilingMaterial.emissiveMap = this.dynamicTexture;
     }
 
     start() {
-        if (this.isActive || !this.ctx) return;
+        if (this.isActive || !this.textureCtx) return;
         this.isActive = true;
         this._createParticles();
     }
     
     _getColorFromUV(u, v) {
-        const x = Math.floor(u * this.ctx.canvas.width);
-        const y = Math.floor(v * this.ctx.canvas.height);
-        const pixel = this.ctx.getImageData(x, y, 1, 1).data;
+        const x = Math.floor(u * this.textureCanvas.width);
+        const y = Math.floor(v * this.textureCanvas.height);
+        const pixel = this.textureCtx.getImageData(x, y, 1, 1).data;
         const color = new THREE.Color(`rgb(${pixel[0]}, ${pixel[1]}, ${pixel[2]})`);
         
         // Desaturate and then hyper-saturate for the effect
@@ -67,6 +79,26 @@ export class DrippingPaintEffect {
         return color;
     }
 
+    _smearTexture(u, v, color) {
+        const x = u * this.textureCanvas.width;
+        const y = v * this.textureCanvas.height;
+        const radius = 8; // Smear radius
+
+        let hsl = {};
+        color.getHSL(hsl);
+        const smearColor = new THREE.Color().setHSL(hsl.h, hsl.s * 0.5, hsl.l * 0.6);
+
+        this.textureCtx.fillStyle = `rgba(${smearColor.r * 255}, ${smearColor.g * 255}, ${smearColor.b * 255}, 0.1)`;
+        for(let i=0; i < 10; i++){
+            this.textureCtx.beginPath();
+            this.textureCtx.arc(x, y + i * 2, radius * (1 - i/15), 0, Math.PI * 2);
+            this.textureCtx.fill();
+        }
+
+        this.dynamicTexture.needsUpdate = true;
+        this.ceilingMaterial.needsUpdate = true;
+    }
+
     _createParticles() {
         const geometry = new THREE.BufferGeometry();
         const positions = [];
@@ -75,52 +107,66 @@ export class DrippingPaintEffect {
         const alphas = [];
         this.particleData = [];
 
-        const numClusters = 7;
+        const numClusters = 5;
         const clusterCenters = [];
         for (let i = 0; i < numClusters; i++) {
             const angle = Math.random() * Math.PI * 2;
-            const radius = Math.random() * 25.0; // Clusters not at the very edge
+            const radius = Math.random() * 20.0; 
             clusterCenters.push({ x: Math.cos(angle) * radius, z: Math.sin(angle) * radius });
         }
 
-        for (let i = 0; i < this.particleCount; i++) {
+        for (let i = 0; i < this.dripCount; i++) {
             // Pick a cluster and generate a point within it
             const cluster = clusterCenters[i % numClusters];
-            const clusterRadius = 6.0;
+            const clusterRadius = 8.0;
             const angle = Math.random() * Math.PI * 2;
             const radius = Math.random() * clusterRadius;
             
             let x = cluster.x + Math.cos(angle) * radius;
             let z = cluster.z + Math.sin(angle) * radius;
             
-            // Ensure particles are within the ceiling bounds
             if (Math.sqrt(x*x + z*z) > 29.5) {
                 x *= 0.9;
                 z *= 0.9;
             }
 
-            // Project onto the sphere (ceiling)
             const y = 25 + Math.sqrt(Math.max(0, 30 * 30 - x * x - z * z));
-
-            positions.push(x, y, z);
-
             const u = 0.5 + x / 60;
             const v = 0.5 + z / 60;
             const color = this._getColorFromUV(u, v);
-            colors.push(color.r, color.g, color.b);
+            const initialSize = Math.random() * 2.0 + 1.0;
 
-            const initialSize = Math.random() * 1.5 + 0.5;
-            sizes.push(initialSize * 0.5); // Start smaller before swelling
+            // Drip Head
+            positions.push(x, y, z);
+            colors.push(color.r, color.g, color.b);
+            sizes.push(initialSize * 0.5);
             alphas.push(1.0);
-            
             this.particleData.push({
+                isHead: true,
                 initialPos: new THREE.Vector3(x, y, z),
+                uv: new THREE.Vector2(u,v),
+                color: color,
                 velocity: new THREE.Vector3(0, 0, 0),
-                delay: Math.random() * 15.0 + 5.0, // Increased delay for slower start
+                delay: Math.random() * 20.0 + 8.0, 
                 life: 0,
                 state: 'gathering', // gathering, falling, splatted
                 initialSize: initialSize,
-                wobbleFactor: Math.random() * Math.PI * 2, // For unique shimmer
+                wobbleFactor: Math.random() * Math.PI * 2,
+            });
+
+            // Drip Tail
+            positions.push(x, y, z);
+            colors.push(color.r, color.g, color.b);
+            sizes.push(initialSize * 0.25);
+            alphas.push(0.6);
+            this.particleData.push({
+                isHead: false,
+                initialPos: new THREE.Vector3(x, y, z),
+                velocity: new THREE.Vector3(0, 0, 0),
+                delay: Math.random() * 20.0 + 8.0,
+                life: 0,
+                state: 'gathering',
+                initialSize: initialSize * 0.7,
             });
         }
 
@@ -150,7 +196,7 @@ export class DrippingPaintEffect {
         const positions = this.particles.geometry.attributes.position.array;
         const alphas = this.particles.geometry.attributes.alpha.array;
         const sizes = this.particles.geometry.attributes.size.array;
-        const gravity = 2.5; // Slightly increased gravity for a heavier feel
+        const gravity = 2.8;
 
         for (let i = 0; i < this.particleCount; i++) {
             const p = this.particleData[i];
@@ -158,63 +204,99 @@ export class DrippingPaintEffect {
             const i3 = i * 3;
 
             if (p.state === 'gathering') {
-                if (p.life < p.delay) {
-                    // Swell up before falling
-                    sizes[i] = p.initialSize * 0.5 + (p.life / p.delay) * p.initialSize;
-                    // Shimmer effect
-                    const shimmer = Math.sin(p.life * 2 + p.wobbleFactor) * 0.05;
-                    positions[i3] = p.initialPos.x + shimmer;
-                    positions[i3 + 2] = p.initialPos.z - shimmer;
-                } else {
-                    p.state = 'falling';
-                    p.life = 0;
-                    // Start with a very small downward velocity
-                    p.velocity.set((Math.random() - 0.5) * 0.1, -0.01, (Math.random() - 0.5) * 0.1);
+                if (p.isHead) { // Only heads shimmer and trigger fall
+                    if (p.life < p.delay) {
+                        sizes[i] = p.initialSize * 0.5 + (p.life / p.delay) * p.initialSize;
+                        const shimmer = Math.sin(p.life * 2 + p.wobbleFactor) * 0.05;
+                        positions[i3] = p.initialPos.x + shimmer;
+                        positions[i3 + 2] = p.initialPos.z - shimmer;
+                    } else {
+                        // Head starts falling
+                        p.state = 'falling';
+                        p.life = 0;
+                        p.velocity.set((Math.random() - 0.5) * 0.1, -0.01, (Math.random() - 0.5) * 0.1);
+                        this._smearTexture(p.uv.x, p.uv.y, p.color);
+
+                        // Find its tail and make it fall too
+                        const tail = this.particleData[i+1];
+                        if(tail && !tail.isHead) {
+                            tail.state = 'falling';
+                            tail.life = 0;
+                            tail.velocity.copy(p.velocity);
+                        }
+                    }
                 }
             } else if (p.state === 'falling') {
-                // Apply accelerating gravity for a "heavy" tear-drop feel
                 const fallAcceleration = gravity * Math.min(1.0, p.life * 1.2);
                 p.velocity.y -= fallAcceleration * delta;
 
-                positions[i3] += p.velocity.x * delta;
-                positions[i3 + 1] += p.velocity.y * delta;
-                positions[i3 + 2] += p.velocity.z * delta;
+                if (!p.isHead) { // Tail follows head
+                    const headIndex = i - 1;
+                    const headPos = new THREE.Vector3(positions[headIndex*3], positions[headIndex*3+1], positions[headIndex*3+2]);
+                    const currentPos = new THREE.Vector3(positions[i3], positions[i3+1], positions[i3+2]);
+                    // Simple lerp to follow, creates a stretchy tail effect
+                    currentPos.lerp(headPos, 0.3);
+                    positions[i3] = currentPos.x;
+                    positions[i3+1] = currentPos.y;
+                    positions[i3+2] = currentPos.z;
 
-                // Hit the floor
-                if (positions[i3 + 1] < 0.1) {
+                    // Fade tail over time
+                    alphas[i] = Math.max(0, 0.6 - p.life * 0.2);
+                } else { // Head leads the fall
+                    positions[i3] += p.velocity.x * delta;
+                    positions[i3 + 1] += p.velocity.y * delta;
+                    positions[i3 + 2] += p.velocity.z * delta;
+                }
+
+                if (p.isHead && positions[i3 + 1] < 0.1) {
                     positions[i3 + 1] = 0.1;
                     p.state = 'splatted';
                     p.life = 0;
-                    // Splash bigger based on final velocity
                     const speed = p.velocity.length();
                     sizes[i] *= 1.2 + Math.min(3, speed * 0.2); 
+                    
+                    const tail = this.particleData[i+1];
+                    if(tail && !tail.isHead) {
+                        tail.state = 'splatted'; // Make tail disappear
+                        alphas[i+1] = 0;
+                    }
                 }
             } else if (p.state === 'splatted') {
-                 // Puddle spreads out then fades
+                 if (!p.isHead) continue; // Only heads splat
+
                 const spreadDuration = 0.7;
                 const fadeDuration = 3.0;
                 
                 if (p.life < spreadDuration) {
-                    // Spread out
                     sizes[i] += (2.0 - (p.life / spreadDuration)) * delta;
                 } else {
-                    // Fade out
                     alphas[i] = Math.max(0, 1.0 - (p.life - spreadDuration) / fadeDuration);
                 }
 
-
                 if (alphas[i] <= 0) {
-                    // Reset particle to ceiling
+                    // --- Reset Head ---
                     positions[i3] = p.initialPos.x;
                     positions[i3 + 1] = p.initialPos.y;
                     positions[i3 + 2] = p.initialPos.z;
-                    
                     p.velocity.set(0, 0, 0);
-                    p.delay = Math.random() * 15.0 + 8.0; // Give it a long delay before respawning
+                    p.delay = Math.random() * 20.0 + 15.0; // Longer respawn
                     p.life = 0;
                     p.state = 'gathering';
                     alphas[i] = 1.0;
-                    sizes[i] = p.initialSize * 0.5; // Reset to small size
+                    sizes[i] = p.initialSize * 0.5;
+
+                    // --- Reset Tail ---
+                    const tailIndex = i + 1;
+                    if (this.particleData[tailIndex] && !this.particleData[tailIndex].isHead) {
+                        const tail = this.particleData[tailIndex];
+                        const tail_i3 = tailIndex * 3;
+                        positions[tail_i3] = tail.initialPos.x;
+                        positions[tail_i3 + 1] = tail.initialPos.y;
+                        positions[tail_i3 + 2] = tail.initialPos.z;
+                        tail.state = 'gathering';
+                        tail.life = 0;
+                        alphas[tailIndex] = 0.6;
+                    }
                 }
             }
         }

@@ -68,10 +68,13 @@ async function init() {
     const ceilingTexture = loader.load('ceiling_fresco.png', (texture) => {
         // Dripping Paint Effect is created here, after the texture has loaded.
         if (texture.image) {
-            drippingEffect = new DrippingPaintEffect(scene, texture);
+            // We need to pass the material to the effect so it can update the texture
+            const ceiling = scene.getObjectByName('ceiling');
+            drippingEffect = new DrippingPaintEffect(scene, texture, ceiling.material);
         } else {
             texture.image.onload = () => {
-                 drippingEffect = new DrippingPaintEffect(scene, texture);
+                 const ceiling = scene.getObjectByName('ceiling');
+                 drippingEffect = new DrippingPaintEffect(scene, texture, ceiling.material);
             }
         }
     });
@@ -100,6 +103,7 @@ async function init() {
         emissiveMap: ceilingTexture,
     });
     const ceiling = new THREE.Mesh(ceilingGeometry, ceilingMaterial);
+    ceiling.name = 'ceiling'; // Name it so we can find it
     ceiling.position.y = 25;
     scene.add(ceiling);
 
